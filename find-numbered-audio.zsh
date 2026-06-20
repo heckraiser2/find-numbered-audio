@@ -126,11 +126,17 @@ int_to_roman() {
   print -rn -- "$result"
 }
 
-# Prints: part_num<TAB>chapter_num<TAB>section_num<TAB>album_prefix
+# Prints: volume<TAB>book<TAB>part<TAB>chapter<TAB>section<TAB>album_prefix
 extract_album_structure() {
   local base=$1 word
   local stripped=$base
-  local part_num=0 chapter_num=0 section_num=0 album_prefix=
+  local volume_num=0 book_num=0 part_num=0 chapter_num=0 section_num=0 album_prefix=
+  if [[ $base =~ '(^|[^[:alpha:]])[Vv][Oo][Ll][Uu][Mm][Ee][._ -]*([0-9]+)' ]]; then
+    volume_num=$(( 10#${match[2]} ))
+  fi
+  if [[ $base =~ '(^|[^[:alpha:]])[Bb][Oo][Oo][Kk][._ -]*([0-9]+)' ]]; then
+    book_num=$(( 10#${match[2]} ))
+  fi
   if [[ $base =~ '([Pp][Aa][Rr][Tt])([._ -]*)([0-9]+)' ]]; then
     part_num=$(( 10#${match[3]} ))
   fi
@@ -140,6 +146,12 @@ extract_album_structure() {
   if [[ $base =~ '([Ss][Ee][Cc][Tt][Ii][Oo][Nn])([._ -]*)([0-9]+)' ]]; then
     section_num=$(( 10#${match[3]} ))
   fi
+  while [[ $stripped =~ '(.*)(^|[^[:alpha:]])[Vv][Oo][Ll][Uu][Mm][Ee][._ -]*([0-9]+)(.*)' ]]; do
+    stripped="${match[1]}${match[4]}"
+  done
+  while [[ $stripped =~ '(.*)(^|[^[:alpha:]])[Bb][Oo][Oo][Kk][._ -]*([0-9]+)(.*)' ]]; do
+    stripped="${match[1]}${match[4]}"
+  done
   for word in Part Chapter Section; do
     while [[ $stripped =~ '(.*)'${word}'([._ -]*)([0-9]+)(.*)' ]]; do
       local _prefix=${match[1]} _suffix=${match[4]}
@@ -151,13 +163,33 @@ extract_album_structure() {
     album_prefix=$(strip_edge_seps "$album_prefix")
   fi
   [[ -z $album_prefix ]] && album_prefix=$base
-  print -rn -- "${part_num}"$'\t'"${chapter_num}"$'\t'"${section_num}"$'\t'"${album_prefix}"
+  if [[ -z $album_prefix || $album_prefix == $base ]] && \
+     (( volume_num || book_num || part_num || chapter_num || section_num )); then
+    album_prefix=''
+  fi
+  print -rn -- "${volume_num}"$'\t'"${book_num}"$'\t'"${part_num}"$'\t'"${chapter_num}"$'\t'"${section_num}"$'\t'"${album_prefix}"
+}
+
+typeset -ga STRUCT_FIELDS
+load_structure_fields() {
+  STRUCT_FIELDS=("${(@ps:\t:)${1}}")
+}
+
+strip_trailing_structure_index() {
+  local key=$1 e_num=$2
+  local lb=${(L)key} keep
+  [[ $lb =~ '(.*)(^|[^[:alpha:]])(volume|book|part|chapter|section)[._ -]*'${e_num}'$' ]] || return 1
+  keep=${#match[1]}
+  key=${key[1,$keep]}
+  key=$(strip_edge_seps "$key")
+  print -rn -- "$key"
 }
 
 is_structure_derived_end() {
   local base=$1 e_num=$2
-  # Arabic Part/Chapter/Section labels only; trailing Roman (e.g. Chapter III) is a track index.
-  [[ $e_num == <-> ]] && [[ $base =~ '(Part|Chapter|Section)[._ -]*'${e_num}'$' ]]
+  local lb=${(L)base}
+  # Arabic structure labels only; trailing Roman (e.g. Chapter III) is a track index.
+  [[ $e_num == <-> ]] && [[ $lb =~ '(^|[^[:alpha:]])(volume|book|part|chapter|section)[._ -]*'${e_num}'$' ]]
 }
 
 # True when begin/end numerals are a track index (e.g. -01), not Part/Chapter/Section labels.
@@ -305,7 +337,7 @@ choose_shared_album_key() {
 # Merge end-primary tracks that share a title prefix or suffix (e.g. Book … 01, Book … 02).
 scan_entry_line() {
   local -a fields=("$@")
-  print -rn -- "${fields[1]}"$'\t'"${fields[2]}"$'\t'"${fields[3]}"$'\t'"${fields[4]}"$'\t'"${fields[5]}"$'\t'"${fields[6]}"$'\t'"${fields[7]}"$'\t'"${fields[8]}"
+  print -rn -- "${fields[1]}"$'\t'"${fields[2]}"$'\t'"${fields[3]}"$'\t'"${fields[4]}"$'\t'"${fields[5]}"$'\t'"${fields[6]}"$'\t'"${fields[7]}"$'\t'"${fields[8]}"$'\t'"${fields[9]}"$'\t'"${fields[10]}"
 }
 
 append_scan_entry() {
@@ -329,7 +361,7 @@ regroup_end_primary_lines() {
     if (( ${#run_lines} < 2 )); then
       for stem_line in "${run_lines[@]}"; do
         fields=("${(@ps:\t:)stem_line}")
-        gkey_restore="end|${kind}|${fields[7]}"
+        gkey_restore="end|${kind}|${fields[9]}"
         append_scan_entry "$gkey_restore" "${fields[@]}"
       done
       run_lines=(); run_stems=(); prev=-999
@@ -338,7 +370,7 @@ regroup_end_primary_lines() {
     shared_key=$(choose_shared_album_key "${run_stems[@]}") || {
       for stem_line in "${run_lines[@]}"; do
         fields=("${(@ps:\t:)stem_line}")
-        gkey_restore="end|${kind}|${fields[7]}"
+        gkey_restore="end|${kind}|${fields[9]}"
         append_scan_entry "$gkey_restore" "${fields[@]}"
       done
       run_lines=(); run_stems=(); prev=-999
@@ -347,7 +379,7 @@ regroup_end_primary_lines() {
     new_gkey="end|${kind}|${shared_key}"
     for stem_line in "${run_lines[@]}"; do
       fields=("${(@ps:\t:)stem_line}")
-      fields[7]=$shared_key
+      fields[9]=$shared_key
       append_scan_entry "$new_gkey" "${fields[@]}"
     done
     run_lines=(); run_stems=(); prev=-999
@@ -358,7 +390,7 @@ regroup_end_primary_lines() {
     stem_line=${line#*$'\t'}
     val=$(( 10#$track_val ))
     fields=("${(@ps:\t:)stem_line}")
-    stem=${fields[7]}
+    stem=${fields[9]}
     if (( ${#run_lines} && val != prev + 1 )); then
       flush_one_run
     fi
@@ -400,8 +432,10 @@ regroup_shared_title_albums() {
 }
 
 structure_part_label() {
-  local part_num=$1 chapter_num=$2 section_num=$3
+  local volume_num=$1 book_num=$2 part_num=$3 chapter_num=$4 section_num=$5
   local -a labels=()
+  (( volume_num )) && labels+=("Volume $volume_num")
+  (( book_num )) && labels+=("Book $book_num")
   (( part_num )) && labels+=("Part $part_num")
   (( chapter_num )) && labels+=("Chapter $chapter_num")
   (( section_num )) && labels+=("Section $section_num")
@@ -418,12 +452,12 @@ format_leading_numeral() {
   fi
 }
 
-# PARSE_RESULT: pos kind val key display_num album_key album_prefix part chapter section true_edge title_key
+# PARSE_RESULT: pos kind val key display_num album_key album_prefix volume book part chapter section true_edge title_key
 parse_audio_name() {
   local base=$1
   local b_num= b_kind= b_val= e_num= e_kind= e_val=
   local roman_candidate key album_key album_prefix title_key
-  local part_num=0 chapter_num=0 section_num=0 true_edge=0 struct_data
+  local volume_num=0 book_num=0 part_num=0 chapter_num=0 section_num=0 true_edge=0 struct_data
   local pos use_kind use_val use_num part_label
 
   if [[ $base =~ '^([0-9]+)(.*)' ]]; then
@@ -456,11 +490,14 @@ parse_audio_name() {
 
   if [[ $pos == none ]]; then
     struct_data=$(extract_album_structure "$base")
-    part_num=${struct_data%%$'\t'*}; struct_data=${struct_data#*$'\t'}
-    chapter_num=${struct_data%%$'\t'*}; struct_data=${struct_data#*$'\t'}
-    section_num=${struct_data%%$'\t'*}; struct_data=${struct_data#*$'\t'}
-    album_prefix=$struct_data
-    (( part_num || chapter_num || section_num )) || return 1
+    load_structure_fields "$struct_data"
+    volume_num=$STRUCT_FIELDS[1]
+    book_num=$STRUCT_FIELDS[2]
+    part_num=$STRUCT_FIELDS[3]
+    chapter_num=$STRUCT_FIELDS[4]
+    section_num=$STRUCT_FIELDS[5]
+    album_prefix=$STRUCT_FIELDS[6]
+    (( volume_num || book_num || part_num || chapter_num || section_num )) || return 1
     pos=structure
     use_kind=arabic; use_val=0; use_num=''
     true_edge=0
@@ -468,8 +505,12 @@ parse_audio_name() {
   else
     if is_true_edge_track "$base" "$b_num" "$e_num"; then
       true_edge=1
-      local catalog_end=0 catalog_begin=0
-      if [[ $pos == both ]] && is_catalog_end_numeral "$b_val" "$e_val" "$e_num"; then
+      local catalog_end=0 catalog_begin=0 structure_end=0
+      if [[ $pos == both ]] && is_structure_derived_end "$base" "$e_num"; then
+        structure_end=1
+        use_kind=$b_kind; use_val=$b_val; use_num=$b_num
+        pos=begin
+      elif [[ $pos == both ]] && is_catalog_end_numeral "$b_val" "$e_val" "$e_num"; then
         catalog_end=1
         use_kind=$b_kind; use_val=$b_val; use_num=$b_num
         pos=begin
@@ -483,23 +524,47 @@ parse_audio_name() {
         use_kind=$b_kind; use_val=$b_val; use_num=$b_num
       fi
       key=$base
+      local structure_book_num=0 structure_volume_num=0
       if [[ -n $b_num ]] && (( ! catalog_begin )); then key=${key#"$b_num"}; key=$(strip_edge_seps "$key"); fi
-      if [[ -n $e_num ]] && (( ! catalog_end )); then key=${key%"$e_num"}; key=$(strip_edge_seps "$key"); fi
+      if (( structure_end )); then
+        local lb=${(L)key}
+        if [[ $lb =~ '(^|[^[:alpha:]])(book)[._ -]*'${e_num}'$' ]]; then
+          structure_book_num=$(( 10#$e_num ))
+          key=$(strip_trailing_structure_index "$key" "$e_num")
+        elif [[ $lb =~ '(^|[^[:alpha:]])(volume)[._ -]*'${e_num}'$' ]]; then
+          structure_volume_num=$(( 10#$e_num ))
+          key=$(strip_trailing_structure_index "$key" "$e_num")
+        else
+          key=${key%"$e_num"}
+          key=$(strip_edge_seps "$key")
+        fi
+      elif [[ -n $e_num ]] && (( ! catalog_end )); then
+        key=${key%"$e_num"}
+        key=$(strip_edge_seps "$key")
+      fi
       [[ -n $key ]] || key='__bare__'
       struct_data=$(extract_album_structure "$key")
-      part_num=${struct_data%%$'\t'*}; struct_data=${struct_data#*$'\t'}
-      chapter_num=${struct_data%%$'\t'*}; struct_data=${struct_data#*$'\t'}
-      section_num=${struct_data%%$'\t'*}; struct_data=${struct_data#*$'\t'}
-      album_prefix=$struct_data
+      load_structure_fields "$struct_data"
+      volume_num=$STRUCT_FIELDS[1]
+      book_num=$STRUCT_FIELDS[2]
+      part_num=$STRUCT_FIELDS[3]
+      chapter_num=$STRUCT_FIELDS[4]
+      section_num=$STRUCT_FIELDS[5]
+      album_prefix=$STRUCT_FIELDS[6]
+      (( structure_volume_num )) && volume_num=$structure_volume_num
+      (( structure_book_num )) && book_num=$structure_book_num
     else
       true_edge=0
       use_kind=arabic; use_val=0; use_num=''
       pos=structure
       struct_data=$(extract_album_structure "$base")
-      part_num=${struct_data%%$'\t'*}; struct_data=${struct_data#*$'\t'}
-      chapter_num=${struct_data%%$'\t'*}; struct_data=${struct_data#*$'\t'}
-      section_num=${struct_data%%$'\t'*}; struct_data=${struct_data#*$'\t'}
-      album_prefix=$struct_data
+      load_structure_fields "$struct_data"
+      volume_num=$STRUCT_FIELDS[1]
+      book_num=$STRUCT_FIELDS[2]
+      part_num=$STRUCT_FIELDS[3]
+      chapter_num=$STRUCT_FIELDS[4]
+      section_num=$STRUCT_FIELDS[5]
+      album_prefix=$STRUCT_FIELDS[6]
       key=$album_prefix
     fi
   fi
@@ -508,7 +573,7 @@ parse_audio_name() {
   album_key=$album_prefix
   [[ -n $album_key ]] || album_key='__bare__'
 
-  part_label=$(structure_part_label "$part_num" "$chapter_num" "$section_num")
+  part_label=$(structure_part_label "$volume_num" "$book_num" "$part_num" "$chapter_num" "$section_num")
   album_title=$(clean_album_title_prefix "$album_prefix")
   if [[ -n $part_label && -n $album_title ]]; then
     title_key="${album_title} ${part_label}"
@@ -522,7 +587,7 @@ parse_audio_name() {
   [[ -n $title_key ]] || title_key=$key
   [[ -n $title_key ]] || title_key='__bare__'
 
-  PARSE_RESULT=("$pos" "$use_kind" "$use_val" "$key" "$use_num" "$album_key" "$album_prefix" "$part_num" "$chapter_num" "$section_num" "$true_edge" "$title_key")
+  PARSE_RESULT=("$pos" "$use_kind" "$use_val" "$key" "$use_num" "$album_key" "$album_prefix" "$volume_num" "$book_num" "$part_num" "$chapter_num" "$section_num" "$true_edge" "$title_key")
 }
 
 compute_renamed_path() {
@@ -536,7 +601,7 @@ compute_renamed_path() {
 
   if parse_audio_name "$base"; then
     kind=$PARSE_RESULT[2]
-    [[ -z $title_key ]] && title_key=$PARSE_RESULT[12]
+    [[ -z $title_key ]] && title_key=$PARSE_RESULT[14]
     [[ -z $title_key || $title_key == __bare__ ]] && title_key=$PARSE_RESULT[4]
   elif [[ -n $title_key && $title_key != __bare__ ]]; then
     kind=arabic
@@ -606,8 +671,8 @@ clean_album_title_prefix() {
 }
 
 resolve_title_key() {
-  local album_prefix=$1 part_num=$2 chapter_num=$3 section_num=$4
-  local synth_titles=${5:-0} title_stem=${6:-}
+  local album_prefix=$1 volume_num=$2 book_num=$3 part_num=$4 chapter_num=$5 section_num=$6
+  local synth_titles=${7:-0} title_stem=${8:-}
   local label= album_title=
   if [[ -n $title_stem && $title_stem != __bare__ ]]; then
     print -r -- "$title_stem"
@@ -618,7 +683,7 @@ resolve_title_key() {
     [[ -n $album_title ]] && print -r -- "$album_title" || print -r -- '__bare__'
     return 0
   fi
-  label=$(structure_part_label "$part_num" "$chapter_num" "$section_num")
+  label=$(structure_part_label "$volume_num" "$book_num" "$part_num" "$chapter_num" "$section_num")
   if [[ -n $label && -n $album_title ]]; then
     print -r -- "${album_title} ${label}"
   elif [[ -n $label ]]; then
@@ -639,7 +704,7 @@ album_prefix_plan() {
 
   for entry in "${run[@]}"; do
     fields=("${(@ps:\t:)entry}")
-    part_num=$fields[4]
+    part_num=$fields[6]
     track_val=$fields[2]
     if [[ -n $prev_part && $part_num != $prev_part ]]; then
       if (( track_val <= max_in_part )); then
@@ -658,14 +723,16 @@ album_prefix_plan() {
 # True when multiple Part/Chapter/Section levels appear in one album run.
 structure_levels_mixed() {
   local -a run=("$@") fields entry
-  local -i has_part=0 has_chapter=0 has_section=0
+  local -i has_volume=0 has_book=0 has_part=0 has_chapter=0 has_section=0
   for entry in "${run[@]}"; do
     fields=("${(@ps:\t:)entry}")
-    (( fields[4] )) && has_part=1
-    (( fields[5] )) && has_chapter=1
-    (( fields[6] )) && has_section=1
+    (( fields[4] )) && has_volume=1
+    (( fields[5] )) && has_book=1
+    (( fields[6] )) && has_part=1
+    (( fields[7] )) && has_chapter=1
+    (( fields[8] )) && has_section=1
   done
-  (( (has_part + has_chapter + has_section) > 1 ))
+  (( (has_volume + has_book + has_part + has_chapter + has_section) > 1 ))
 }
 
 # No overall track numerals: single structure level uses its number (Chapter 100 → 100);
@@ -683,9 +750,9 @@ synth_prefix_plan() {
   else
     for entry in "${run[@]}"; do
       fields=("${(@ps:\t:)entry}")
-      part_num=$fields[4]
-      chapter_num=$fields[5]
-      section_num=$fields[6]
+      part_num=$fields[6]
+      chapter_num=$fields[7]
+      section_num=$fields[8]
       if (( chapter_num )); then seq_val=$chapter_num
       elif (( section_num )); then seq_val=$section_num
       elif (( part_num )); then seq_val=$part_num
@@ -772,14 +839,16 @@ flush_run_for_rename() {
     pad_width=0
   fi
   fields=("${(@ps:\t:)run[1]}")
-  local album_key=${fields[7]} synth_titles=0
+  local album_key=${fields[9]} synth_titles=0
   use_synth_prefix_plan "$pos" && synth_titles=1
   for entry in "${run[@]}"; do
     fields=("${(@ps:\t:)entry}")
-    if [[ $pos == end && -n ${fields[8]} && ${fields[8]} != __bare__ && ${fields[8]} != ${fields[7]} ]]; then
-      title_key=${fields[8]}
+    if [[ $pos == end && -n ${fields[10]} && ${fields[10]} != __bare__ && ${fields[10]} != ${fields[9]} ]]; then
+      title_key=${fields[10]}
+    elif [[ $pos == begin && -n ${fields[10]} && ${fields[10]} != __bare__ ]]; then
+      title_key=${fields[10]}
     else
-      title_key=$(resolve_title_key "${fields[7]}" "${fields[4]}" "${fields[5]}" "${fields[6]}" $synth_titles)
+      title_key=$(resolve_title_key "${fields[9]}" "${fields[4]}" "${fields[5]}" "${fields[6]}" "${fields[7]}" "${fields[8]}" $synth_titles)
     fi
     collect_rename_entry "$pad_width" "${prefix_vals[idx]}" "${fields[1]}" "$title_key"
     (( idx++ ))
@@ -796,9 +865,9 @@ handle_group_runs() {
   lines=(${lines:#''})
   run_eligible_for_processing "${lines[@]}" || return 0
   if (( SYNTH_SEQUENCE_MODE || pos == structure )); then
-    sort_cmd=(sort -t '	' -k4,4n -k5,5n -k6,6n)
+    sort_cmd=(sort -t '	' -k4,4n -k5,5n -k6,6n -k7,7n -k8,8n)
   else
-    sort_cmd=(sort -t '	' -k4,4n -k5,5n -k6,6n -k2,2n)
+    sort_cmd=(sort -t '	' -k4,4n -k5,5n -k6,6n -k7,7n -k8,8n -k2,2n)
   fi
   lines=("${(@f)$(printf '%s\n' "${lines[@]}" | LC_ALL=C "${sort_cmd[@]}")}")
 
@@ -908,13 +977,14 @@ scan_directory() {
       continue
     fi
     (( scan_total++ ))
-    (( PARSE_RESULT[11] )) && (( scan_true_edge++ ))
-    (( PARSE_RESULT[8] || PARSE_RESULT[9] || PARSE_RESULT[10] )) && (( scan_structure++ ))
+    (( PARSE_RESULT[13] )) && (( scan_true_edge++ ))
+    (( PARSE_RESULT[8] || PARSE_RESULT[9] || PARSE_RESULT[10] || PARSE_RESULT[11] || PARSE_RESULT[12] )) && (( scan_structure++ ))
     gkey="${PARSE_RESULT[1]}|${PARSE_RESULT[2]}|${PARSE_RESULT[6]}"
     append_scan_entry "$gkey" \
       "$filepath" "${PARSE_RESULT[3]}" "${PARSE_RESULT[5]}" \
       "${PARSE_RESULT[8]}" "${PARSE_RESULT[9]}" "${PARSE_RESULT[10]}" \
-      "${PARSE_RESULT[7]}" "${PARSE_RESULT[12]}"
+      "${PARSE_RESULT[11]}" "${PARSE_RESULT[12]}" \
+      "${PARSE_RESULT[7]}" "${PARSE_RESULT[14]}"
   done < <(command find "$target_dir" "${find_args[@]}" 2>/dev/null)
   regroup_shared_title_albums
   if (( scan_total >= 2 && scan_true_edge == 0 && scan_structure == scan_total )); then

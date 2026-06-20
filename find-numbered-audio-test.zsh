@@ -42,7 +42,7 @@ assert_not_contains() {
 
 setup_fixtures() {
   rm -rf "$FIXTURES"
-  mkdir -p "$FIXTURES"/{01-begin-arabic,02-end-arabic,03-end-roman,04-begin-roman,05-both-arabic,06-no-series,07-false-positive,08-gap,09-lost-symbol-part,10-inferno-sections,11-chapter-mid,12-chapter-credits,13-single-end,14-single-chapter,15-single-subdirs,16-lonely-in-multi,17-edge-spaces-begin,18-edge-spaces-end,19-inferno-spaced,20-shared-prefix,21-shared-suffix,22-shared-suffix-numeric,23-shared-prefix-year}
+  mkdir -p "$FIXTURES"/{01-begin-arabic,02-end-arabic,03-end-roman,04-begin-roman,05-both-arabic,06-no-series,07-false-positive,08-gap,09-lost-symbol-part,10-inferno-sections,11-chapter-mid,12-chapter-credits,13-single-end,14-single-chapter,15-single-subdirs,16-lonely-in-multi,17-edge-spaces-begin,18-edge-spaces-end,19-inferno-spaced,20-shared-prefix,21-shared-suffix,22-shared-suffix-numeric,23-shared-prefix-year,24-book-begin-track}
 
   for i in 1 2 3; do
     touch "$FIXTURES/01-begin-arabic/${i} Track.mp3"
@@ -104,6 +104,10 @@ setup_fixtures() {
   touch "$FIXTURES/23-shared-prefix-year/2001 A Space Odyssey - 01.mp3"
   touch "$FIXTURES/23-shared-prefix-year/2001 A Space Odyssey - 02.mp3"
   touch "$FIXTURES/23-shared-prefix-year/2001 A Space Odyssey - 03.mp3"
+  mkdir -p "$FIXTURES/24-book-begin-track"
+  touch "$FIXTURES/24-book-begin-track/01 - Goblin Goblin Reign, Book 1.mp3"
+  touch "$FIXTURES/24-book-begin-track/02 - Goblin Goblin Reign, Book 1.mp3"
+  touch "$FIXTURES/24-book-begin-track/03 - Goblin Goblin Reign, Book 1.mp3"
   cat > "$FIXTURES/12-chapter-credits/playlist.m3u" <<'EOF'
 #EXTM3U
 #EXTINF:28, Opening Credits
@@ -394,6 +398,25 @@ test_shared_prefix_year_catalog() {
   fi
 }
 
+test_book_begin_track_not_book_suffix() {
+  print -r "\n== 24 Book suffix: begin track + Book N in title =="
+  local out=$(run_report "$FIXTURES/24-book-begin-track")
+  assert_contains "series groups goblin" 'Series (Arabic): Goblin Goblin Reign' "$out"
+  assert_contains "track 01" '[01]' "$out"
+  assert_contains "track 03" '[03]' "$out"
+  out=$(run_rename_dry "$FIXTURES/24-book-begin-track")
+  assert_contains "plans 01 with book title" '01 Goblin Goblin Reign, Book 1.mp3' "$out"
+  assert_contains "plans 02 distinct" '02 Goblin Goblin Reign, Book 1.mp3' "$out"
+  assert_contains "plans 03 distinct" '03 Goblin Goblin Reign, Book 1.mp3' "$out"
+  if print -r -- "$out" | grep -c '-> .*01 Goblin Goblin Reign, Book 1.mp3' | grep -q '^3$'; then
+    print -u2 "  FAIL: all files collapse to 01"
+    (( FAIL++ ))
+  else
+    print -r "  PASS: distinct track prefixes 01-03"
+    (( PASS++ ))
+  fi
+}
+
 test_shared_suffix_end_numeral() {
   print -r "\n== 21 Shared suffix: common title suffix grouping =="
   local out=$(run_rename_dry "$FIXTURES/21-shared-suffix")
@@ -475,6 +498,7 @@ main() {
   test_shared_suffix_end_numeral
   test_shared_suffix_numeric_catalog
   test_shared_prefix_year_catalog
+  test_book_begin_track_not_book_suffix
   test_format_unit
 
   print -r "\n== Summary =="
