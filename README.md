@@ -10,7 +10,7 @@ Zsh script to find sequentially numbered audio files (audiobook chapters, album 
 ## Install
 
 ```bash
-git clone https://github.com/timothya.cook/find-numbered-audio.git
+git clone https://github.com/heckraiser2/find-numbered-audio.git
 chmod +x find-numbered-audio.zsh find-numbered-audio-test.zsh
 ```
 
