@@ -1,0 +1,18 @@
+---
+description: Planned macOS GUI for find-numbered-audio — wrap script, do not rewrite logic
+globs: "**/*.{swift,m,h,xcworkspace,xcodeproj/**}"
+alwaysApply: true
+---
+
+# find-numbered-audio macOS GUI plan
+
+When building a macOS GUI for this project:
+
+- **Wrap** `find-numbered-audio.zsh` via `Process` + `/bin/zsh`; keep rename/parse logic in zsh (97 tests).
+- **Add first:** `--json-report` and `--json-rename` CLI modes for the app to consume.
+- **MVP:** folder picker → scan results → rename preview table → confirm → `--rename --apply`.
+- **Default to dry-run**; Apply requires explicit confirmation; show M3U updates when relevant.
+- **Stack:** SwiftUI app bundling script in `Contents/Resources/`.
+- **Do not** reimplement parsing in Swift.
+
+Full plan: `docs/macos-gui-recommendation.md`
