@@ -1,5 +1,7 @@
 # find-numbered-audio
 
+[![Tests](https://github.com/heckraiser2/find-numbered-audio/actions/workflows/test.yml/badge.svg)](https://github.com/heckraiser2/find-numbered-audio/actions/workflows/test.yml)
+
 Zsh script to find sequentially numbered audio files (audiobook chapters, album tracks, etc.) and optionally rename them so the track number is a zero-padded prefix at the front of the filename.
 
 ## Requirements

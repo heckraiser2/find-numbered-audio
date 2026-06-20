@@ -7,8 +7,8 @@
 emulate -L zsh
 
 SCRIPT=${0:a:h}/find-numbered-audio.zsh
-FIXTURES=${HOME}/Downloads/test_data_for_scripts2/find-numbered-audio-fixtures
-ZSH=/bin/zsh
+FIXTURES=${FIXTURES:-${HOME}/Downloads/test_data_for_scripts2/find-numbered-audio-fixtures}
+ZSH=${ZSH:-/bin/zsh}
 
 if [[ ! -f $SCRIPT ]]; then
   print -u2 "Missing script: $SCRIPT"
