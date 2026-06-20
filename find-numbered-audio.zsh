@@ -246,6 +246,20 @@ is_true_edge_track() {
   return 1
 }
 
+# Sets MID_PARSE_PREFIX, MID_PARSE_NUM, MID_PARSE_SUFFIX, MID_PARSE_VAL when
+# basename contains " - NN - " track slot (e.g. Album - 01 - Chapter 01).
+parse_mid_basename_track() {
+  local base=$1
+  MID_PARSE_PREFIX= MID_PARSE_NUM= MID_PARSE_SUFFIX= MID_PARSE_VAL=0
+  [[ $base =~ '(.*) - ([0-9]+) - (.+)' ]] || return 1
+  MID_PARSE_PREFIX=$(strip_edge_seps "$match[1]")
+  MID_PARSE_NUM=$match[2]
+  MID_PARSE_SUFFIX=$(strip_edge_seps "$match[3]")
+  MID_PARSE_VAL=$(( 10#${match[2]} ))
+  [[ -n $MID_PARSE_PREFIX && -n $MID_PARSE_SUFFIX && MID_PARSE_VAL -gt 0 ]] || return 1
+  return 0
+}
+
 # True when leading digits are an ordinal (20th, 1st), not a track index.
 is_ordinal_begin_rest() {
   local rest=$1
@@ -498,7 +512,7 @@ parse_audio_name() {
   local base=$1
   local b_num= b_kind= b_val= e_num= e_kind= e_val=
   local roman_candidate key album_key album_prefix title_key
-  local volume_num=0 book_num=0 part_num=0 chapter_num=0 section_num=0 true_edge=0 embedded_structure=0 struct_data
+  local volume_num=0 book_num=0 part_num=0 chapter_num=0 section_num=0 true_edge=0 embedded_structure=0 mid_basename=0 struct_data
   local pos use_kind use_val use_num part_label
 
   if [[ $base =~ '^([0-9]+)(.*)' ]]; then
@@ -529,6 +543,17 @@ parse_audio_name() {
   else pos=none
   fi
 
+  if [[ -z $b_num ]] && parse_mid_basename_track "$base"; then
+    mid_basename=1
+    b_num=$MID_PARSE_NUM
+    b_kind=arabic
+    b_val=$MID_PARSE_VAL
+    pos=begin
+    if [[ -n $e_num ]] && is_structure_derived_end "$base" "$e_num"; then
+      e_num=; e_kind=; e_val=
+    fi
+  fi
+
   if [[ $pos == none ]]; then
     struct_data=$(extract_album_structure "$base")
     load_structure_fields "$struct_data"
@@ -543,6 +568,28 @@ parse_audio_name() {
     use_kind=arabic; use_val=0; use_num=''
     true_edge=0
     key=$album_prefix
+  elif (( mid_basename )); then
+    true_edge=1
+    use_kind=arabic
+    use_val=$b_val
+    use_num=$b_num
+    pos=begin
+    key="${MID_PARSE_PREFIX} - ${MID_PARSE_SUFFIX}"
+    key=$(collapse_title_separators "$key")
+    [[ -n $key ]] || key='__bare__'
+    struct_data=$(extract_album_structure "$key")
+    load_structure_fields "$struct_data"
+    volume_num=$STRUCT_FIELDS[1]
+    book_num=$STRUCT_FIELDS[2]
+    part_num=$STRUCT_FIELDS[3]
+    chapter_num=$STRUCT_FIELDS[4]
+    section_num=$STRUCT_FIELDS[5]
+    album_prefix=$STRUCT_FIELDS[6]
+    if has_embedded_structure_labels "$key" "$chapter_num" "$part_num" "$section_num"; then
+      embedded_structure=1
+      album_prefix=$(remove_embedded_structure_segments "$key")
+      album_prefix=$(collapse_title_separators "$album_prefix")
+    fi
   else
     if is_true_edge_track "$base" "$b_num" "$e_num"; then
       true_edge=1
@@ -619,7 +666,7 @@ parse_audio_name() {
   album_key=$album_prefix
   [[ -n $album_key ]] || album_key='__bare__'
 
-  if (( embedded_structure )); then
+  if (( embedded_structure || mid_basename )); then
     title_key=$key
   else
     part_label=$(structure_part_label "$volume_num" "$book_num" "$part_num" "$chapter_num" "$section_num")
