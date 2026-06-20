@@ -89,7 +89,9 @@ CI runs the full suite on Ubuntu and macOS on every push.
 
 ## OpenAudible
 
-After `--rename --apply`, Arabic-numbered chapters sort correctly for OpenAudible’s “Join Audio Files” feature (`01 Title.mp3`, `02 Title.mp3`, …). Put **one book per directory** and verify order with:
+[OpenAudible’s “Join Audio Files”](https://openaudible.org/docs) command joins files in **plain alphabetical (lexicographic) order by full filename**. It does not parse track numbers or prefer numerals at the beginning vs end of the name — whatever makes the entire string sort A→Z is what determines join order. Unpadded names like `Song 1.mp3` … `Song 10.mp3` sort as 1, 10, 11, 2 (the docs warn that `Chapter 11` sorts before `Chapter 2` for the same reason).
+
+After `--rename --apply`, this tool moves the track index to a **zero-padded leading prefix** (`01 Title.mp3`, `02 Title.mp3`, …), which is the most reliable layout for OpenAudible join. Put **one book per directory** and verify order with:
 
 ```bash
 ls -1 /path/to/book | sort
