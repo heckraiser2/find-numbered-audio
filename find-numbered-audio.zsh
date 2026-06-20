@@ -170,6 +170,47 @@ extract_album_structure() {
   print -rn -- "${volume_num}"$'\t'"${book_num}"$'\t'"${part_num}"$'\t'"${chapter_num}"$'\t'"${section_num}"$'\t'"${album_prefix}"
 }
 
+# Collapse duplicate " - " separators left after removing mid-title structure labels.
+collapse_title_separators() {
+  local s=$1
+  while [[ $s == *' -  - '* || $s == *' - - '* ]]; do
+    s=${s// -  - / - }
+    s=${s// - - / - }
+  done
+  s=$(strip_edge_seps "$s")
+  print -r -- "$s"
+}
+
+# Remove mid-title Part/Chapter/Section segments for album grouping keys.
+remove_embedded_structure_segments() {
+  local stem=$1 word
+  for word in Chapter Part Section; do
+    while [[ $stem =~ '(.*)'${word}'[._ -]*([0-9]+)[._ -]+(.*)' ]]; do
+      stem="${match[1]}${match[3]}"
+      stem=$(collapse_title_separators "$stem")
+    done
+  done
+  print -r -- "$stem"
+}
+
+# True when a structure label sits in the title body, not as the trailing track index.
+is_embedded_structure_label() {
+  local key=$1 label=$2 num=$3
+  local lb=${(L)key}
+  (( num )) || return 1
+  [[ $lb == *${label}* ]] || return 1
+  [[ $lb =~ '(^|[^[:alpha:]])'${label}'[._ -]*'${num}'$' ]] && return 1
+  [[ $lb =~ '(^|[^[:alpha:]])'${label}'[._ -]*'${num}'[._ -]+' ]]
+}
+
+has_embedded_structure_labels() {
+  local key=$1 chapter_num=$2 part_num=$3 section_num=$4
+  is_embedded_structure_label "$key" chapter "$chapter_num" && return 0
+  is_embedded_structure_label "$key" part "$part_num" && return 0
+  is_embedded_structure_label "$key" section "$section_num" && return 0
+  return 1
+}
+
 typeset -ga STRUCT_FIELDS
 load_structure_fields() {
   STRUCT_FIELDS=("${(@ps:\t:)${1}}")
@@ -457,7 +498,7 @@ parse_audio_name() {
   local base=$1
   local b_num= b_kind= b_val= e_num= e_kind= e_val=
   local roman_candidate key album_key album_prefix title_key
-  local volume_num=0 book_num=0 part_num=0 chapter_num=0 section_num=0 true_edge=0 struct_data
+  local volume_num=0 book_num=0 part_num=0 chapter_num=0 section_num=0 true_edge=0 embedded_structure=0 struct_data
   local pos use_kind use_val use_num part_label
 
   if [[ $base =~ '^([0-9]+)(.*)' ]]; then
@@ -553,6 +594,11 @@ parse_audio_name() {
       album_prefix=$STRUCT_FIELDS[6]
       (( structure_volume_num )) && volume_num=$structure_volume_num
       (( structure_book_num )) && book_num=$structure_book_num
+      if has_embedded_structure_labels "$key" "$chapter_num" "$part_num" "$section_num"; then
+        embedded_structure=1
+        album_prefix=$(remove_embedded_structure_segments "$key")
+        album_prefix=$(collapse_title_separators "$album_prefix")
+      fi
     else
       true_edge=0
       use_kind=arabic; use_val=0; use_num=''
@@ -573,16 +619,20 @@ parse_audio_name() {
   album_key=$album_prefix
   [[ -n $album_key ]] || album_key='__bare__'
 
-  part_label=$(structure_part_label "$volume_num" "$book_num" "$part_num" "$chapter_num" "$section_num")
-  album_title=$(clean_album_title_prefix "$album_prefix")
-  if [[ -n $part_label && -n $album_title ]]; then
-    title_key="${album_title} ${part_label}"
-  elif [[ -n $part_label ]]; then
-    title_key=$part_label
-  elif [[ -n $album_title ]]; then
-    title_key=$album_title
+  if (( embedded_structure )); then
+    title_key=$key
   else
-    title_key=$album_prefix
+    part_label=$(structure_part_label "$volume_num" "$book_num" "$part_num" "$chapter_num" "$section_num")
+    album_title=$(clean_album_title_prefix "$album_prefix")
+    if [[ -n $part_label && -n $album_title ]]; then
+      title_key="${album_title} ${part_label}"
+    elif [[ -n $part_label ]]; then
+      title_key=$part_label
+    elif [[ -n $album_title ]]; then
+      title_key=$album_title
+    else
+      title_key=$album_prefix
+    fi
   fi
   [[ -n $title_key ]] || title_key=$key
   [[ -n $title_key ]] || title_key='__bare__'
@@ -882,7 +932,16 @@ handle_group_runs() {
 parse_credits_file() {
   local base=$1
   CREDITS_PARSE_ROLE=; CREDITS_PARSE_TITLE=
-  if [[ $base =~ '^[Oo]pening[ _.-]*[Cc]redits?[ _.-]*(.*)' ]]; then
+  if [[ $base =~ '(^|.*[[:space:]_-])[Oo]pening[ _.-]*[Cc]redits?[ _.-]+(.+)' ]]; then
+    CREDITS_PARSE_ROLE=opening
+    CREDITS_PARSE_TITLE=$(strip_edge_seps "$match[2]")
+  elif [[ $base =~ '(^|.*[[:space:]_-])[Ee]nd[ _.-]*[Cc]redits?[ _.-]+(.+)' ]]; then
+    CREDITS_PARSE_ROLE=end
+    CREDITS_PARSE_TITLE=$(strip_edge_seps "$match[2]")
+  elif [[ $base =~ '(^|.*[[:space:]_-])[Cc]losing[ _.-]*[Cc]redits?[ _.-]+(.+)' ]]; then
+    CREDITS_PARSE_ROLE=end
+    CREDITS_PARSE_TITLE=$(strip_edge_seps "$match[2]")
+  elif [[ $base =~ '^[Oo]pening[ _.-]*[Cc]redits?[ _.-]*(.*)' ]]; then
     CREDITS_PARSE_ROLE=opening
     CREDITS_PARSE_TITLE=$(strip_edge_seps "$match[1]")
   elif [[ $base =~ '^[Ee]nd[ _.-]*[Cc]redits?[ _.-]*(.*)' ]]; then
@@ -900,13 +959,33 @@ parse_credits_file() {
 
 credits_album_matches() {
   local credits_title=$1 album_key=$2
-  [[ ${(L)credits_title} == ${(L)album_key} ]]
+  local lc=${(L)credits_title} lk=${(L)album_key}
+  [[ $lc == $lk ]] && return 0
+  [[ $lk == *$lc ]] && return 0
+  [[ $lc == *$lk ]] && return 0
+  return 1
+}
+
+# Title body for a credits rename: leading credits label strips to suffix only;
+# mid-title credits (album - Opening Credits - …) keep the full stem after the track numeral.
+credits_file_title_key() {
+  local base=$1 stem=$base
+  if [[ $base =~ '^([0-9]+)[._ -]+(.+)' ]]; then
+    stem=$match[2]
+  fi
+  if [[ $stem =~ '^[Oo]pening[ _.-]*[Cc]redits?[ _.-]+(.+)' ]] ||
+     [[ $stem =~ '^[Ee]nd[ _.-]*[Cc]redits?[ _.-]+(.+)' ]] ||
+     [[ $stem =~ '^[Cc]losing[ _.-]*[Cc]redits?[ _.-]+(.+)' ]]; then
+    print -r -- "$(strip_edge_seps "$match[1]")"
+  else
+    print -r -- "$stem"
+  fi
 }
 
 # Append opening (00) and end (max+1) credit renames for a planned album run.
 plan_credits_renames() {
   local kind=$1 pad_width=$2 max_prefix=$3 album_key=$4
-  local entry filepath role title prefix_val
+  local entry filepath role title prefix_val title_key base
   typeset -gA CREDITS_PLANNED
 
   for entry in "${SCAN_CREDITS[@]}"; do
@@ -918,7 +997,9 @@ plan_credits_renames() {
     if [[ $role == opening ]]; then prefix_val=0
     else prefix_val=$(( max_prefix + 1 ))
     fi
-    collect_rename_entry "$pad_width" "$prefix_val" "$filepath" "$title"
+    base=$(audio_basename "${filepath:t}")
+    title_key=$(credits_file_title_key "$base")
+    collect_rename_entry "$pad_width" "$prefix_val" "$filepath" "$title_key"
     CREDITS_PLANNED[$filepath]=1
   done
 }
@@ -970,10 +1051,15 @@ scan_directory() {
     (( SCAN_DIR_AUDIO_COUNT[$filepath:h]++ ))
     fname=${filepath:t}
     base=$(audio_basename "$fname")
+    local credits_probe=$base
+    if [[ $base =~ '^([0-9]+)[._ -]+(.+)' ]]; then
+      credits_probe=$match[2]
+    fi
+    if parse_credits_file "$credits_probe" || parse_credits_file "$base"; then
+      SCAN_CREDITS+=("${filepath}"$'\t'"${CREDITS_PARSE_ROLE}"$'\t'"${CREDITS_PARSE_TITLE}")
+      continue
+    fi
     if ! parse_audio_name "$base"; then
-      if parse_credits_file "$base"; then
-        SCAN_CREDITS+=("${filepath}"$'\t'"${CREDITS_PARSE_ROLE}"$'\t'"${CREDITS_PARSE_TITLE}")
-      fi
       continue
     fi
     (( scan_total++ ))

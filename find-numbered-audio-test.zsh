@@ -42,7 +42,7 @@ assert_not_contains() {
 
 setup_fixtures() {
   rm -rf "$FIXTURES"
-  mkdir -p "$FIXTURES"/{01-begin-arabic,02-end-arabic,03-end-roman,04-begin-roman,05-both-arabic,06-no-series,07-false-positive,08-gap,09-lost-symbol-part,10-inferno-sections,11-chapter-mid,12-chapter-credits,13-single-end,14-single-chapter,15-single-subdirs,16-lonely-in-multi,17-edge-spaces-begin,18-edge-spaces-end,19-inferno-spaced,20-shared-prefix,21-shared-suffix,22-shared-suffix-numeric,23-shared-prefix-year,24-book-begin-track}
+  mkdir -p "$FIXTURES"/{01-begin-arabic,02-end-arabic,03-end-roman,04-begin-roman,05-both-arabic,06-no-series,07-false-positive,08-gap,09-lost-symbol-part,10-inferno-sections,11-chapter-mid,12-chapter-credits,13-single-end,14-single-chapter,15-single-subdirs,16-lonely-in-multi,17-edge-spaces-begin,18-edge-spaces-end,19-inferno-spaced,20-shared-prefix,21-shared-suffix,22-shared-suffix-numeric,23-shared-prefix-year,24-book-begin-track,25-embedded-chapter-credits}
 
   for i in 1 2 3; do
     touch "$FIXTURES/01-begin-arabic/${i} Track.mp3"
@@ -108,6 +108,11 @@ setup_fixtures() {
   touch "$FIXTURES/24-book-begin-track/01 - Goblin Goblin Reign, Book 1.mp3"
   touch "$FIXTURES/24-book-begin-track/02 - Goblin Goblin Reign, Book 1.mp3"
   touch "$FIXTURES/24-book-begin-track/03 - Goblin Goblin Reign, Book 1.mp3"
+  mkdir -p "$FIXTURES/25-embedded-chapter-credits"
+  touch "$FIXTURES/25-embedded-chapter-credits/01 For the Loot - Opening Credits - Han Yang, Pearce Adams - Evan Sibley.mp3"
+  touch "$FIXTURES/25-embedded-chapter-credits/02 For the Loot - Chapter 1 - Han Yang, Pearce Adams - Evan Sibley.mp3"
+  touch "$FIXTURES/25-embedded-chapter-credits/03 For the Loot - Chapter 2 - Han Yang, Pearce Adams - Evan Sibley.mp3"
+  touch "$FIXTURES/25-embedded-chapter-credits/04 For the Loot - End Credits - Han Yang, Pearce Adams - Evan Sibley.mp3"
   cat > "$FIXTURES/12-chapter-credits/playlist.m3u" <<'EOF'
 #EXTM3U
 #EXTINF:28, Opening Credits
@@ -417,6 +422,21 @@ test_book_begin_track_not_book_suffix() {
   fi
 }
 
+test_embedded_chapter_credits() {
+  print -r "\n== 25 Embedded chapter: mid-title Chapter + credits =="
+  local out=$(run_report "$FIXTURES/25-embedded-chapter-credits")
+  assert_contains "series groups album title" 'Series (Arabic): For the Loot - Han Yang, Pearce Adams - Evan Sibley' "$out"
+  assert_contains "opening credits 00" '[00]' "$out"
+  assert_contains "chapter 02" '[02]' "$out"
+  assert_contains "end credits 04" '[04]' "$out"
+  assert_not_contains "chapter title not mangled" ' -  - Han Yang' "$out"
+  out=$(run_rename_dry "$FIXTURES/25-embedded-chapter-credits")
+  assert_contains "opening renames to 00" '00 For the Loot - Opening Credits - Han Yang, Pearce Adams - Evan Sibley.mp3' "$out"
+  assert_not_contains "chapters already correct" 'Chapter 1 - Han Yang' "$out"
+  assert_not_contains "no chapter shuffle to 01" '01 For the Loot -  - Han Yang' "$out"
+  assert_not_contains "end credits already numbered" '04 For the Loot - End Credits' "$out"
+}
+
 test_shared_suffix_end_numeral() {
   print -r "\n== 21 Shared suffix: common title suffix grouping =="
   local out=$(run_rename_dry "$FIXTURES/21-shared-suffix")
@@ -499,6 +519,7 @@ main() {
   test_shared_suffix_numeric_catalog
   test_shared_prefix_year_catalog
   test_book_begin_track_not_book_suffix
+  test_embedded_chapter_credits
   test_format_unit
 
   print -r "\n== Summary =="
