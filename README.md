@@ -2,7 +2,36 @@
 
 [![Tests](https://github.com/heckraiser2/find-numbered-audio/actions/workflows/test.yml/badge.svg)](https://github.com/heckraiser2/find-numbered-audio/actions/workflows/test.yml)
 
-Zsh script to find sequentially numbered audio files (audiobook chapters, album tracks, etc.) and optionally rename them so the track number is a zero-padded prefix at the front of the filename.
+**Rename numbered audiobook chapters and audio tracks to sortable, zero-padded filenames** — a zsh CLI for macOS and Linux.
+
+Finds sequentially numbered audio in a directory tree, reports series (Arabic or Roman), and optionally renames files so the track number is a prefix at the front. Designed for audiobook workflows, especially [OpenAudible](https://openaudible.org/) chapter joins.
+
+## What it does
+
+- Detects **begin**, **end**, and **both** edge numerals (`01 Title.mp3`, `Song 1.wav`, `2001 A Space Odyssey - 01.mp3`)
+- Groups **shared title prefix/suffix** albums (`20th Century Ghosts … 01.mp3`)
+- Synthesizes order from **Part / Chapter / Section** labels when there is no edge track number
+- Renames **single-audio folders** (one `.m4b` or chapter file per directory)
+- Updates **`.m3u` playlists** when files are renamed
+- Dry-run by default; `--apply` performs renames
+
+## Examples
+
+| Before | After (`--rename --apply`) |
+|--------|----------------------------|
+| `Song 1.wav` | `01 Song.wav` |
+| `Chapter III.flac` | `III Chapter.flac` |
+| `2001 A Space Odyssey - 01.mp3` | `01 2001 A Space Odyssey.mp3` |
+| `20th Century Ghosts - Intro 01.mp3` | `01 20th Century Ghosts - Intro.mp3` |
+| `01 title - 012345678.mp3` | *(no change — already correct)* |
+
+```bash
+# See what would change
+./find-numbered-audio.zsh --rename ~/Audiobooks/MyBook
+
+# Apply renames + update playlists
+./find-numbered-audio.zsh --rename --apply ~/Audiobooks/MyBook
+```
 
 ## Requirements
 
@@ -13,10 +42,13 @@ Zsh script to find sequentially numbered audio files (audiobook chapters, album 
 
 ```bash
 git clone https://github.com/heckraiser2/find-numbered-audio.git
+cd find-numbered-audio
 chmod +x find-numbered-audio.zsh find-numbered-audio-test.zsh
 ```
 
 Or copy `find-numbered-audio.zsh` anywhere on your `PATH`.
+
+**Stable release:** see [Releases](https://github.com/heckraiser2/find-numbered-audio/releases) for tagged versions.
 
 ## Usage
 
@@ -53,6 +85,20 @@ On Linux, if zsh is not `/bin/zsh`:
 ZSH=/usr/bin/zsh ./find-numbered-audio-test.zsh
 ```
 
+CI runs the full suite on Ubuntu and macOS on every push.
+
 ## OpenAudible
 
-After `--rename --apply`, Arabic-numbered chapters sort correctly for OpenAudible’s “Join Audio Files” feature (`001 Title.mp3`, `002 Title.mp3`, …). Use one book per directory.
+After `--rename --apply`, Arabic-numbered chapters sort correctly for OpenAudible’s “Join Audio Files” feature (`01 Title.mp3`, `02 Title.mp3`, …). Put **one book per directory** and verify order with:
+
+```bash
+ls -1 /path/to/book | sort
+```
+
+## Keywords
+
+audiobook · audiobooks · numbered chapters · batch rename · file renaming · zsh · shell script · CLI · mp3 · m4b · OpenAudible · Roman numerals · playlist m3u · macOS · Linux
+
+## License
+
+[MIT](LICENSE)
