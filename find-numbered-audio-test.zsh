@@ -42,7 +42,7 @@ assert_not_contains() {
 
 setup_fixtures() {
   rm -rf "$FIXTURES"
-  mkdir -p "$FIXTURES"/{01-begin-arabic,02-end-arabic,03-end-roman,04-begin-roman,05-both-arabic,06-no-series,07-false-positive,08-gap,09-lost-symbol-part,10-inferno-sections,11-chapter-mid,12-chapter-credits,13-single-end,14-single-chapter,15-single-subdirs,16-lonely-in-multi,17-edge-spaces-begin,18-edge-spaces-end,19-inferno-spaced,20-shared-prefix,21-shared-suffix,22-shared-suffix-numeric,23-shared-prefix-year,24-book-begin-track,25-embedded-chapter-credits,26-mid-basename-track}
+  mkdir -p "$FIXTURES"/{01-begin-arabic,02-end-arabic,03-end-roman,04-begin-roman,05-both-arabic,06-no-series,07-false-positive,08-gap,09-lost-symbol-part,10-inferno-sections,11-chapter-mid,12-chapter-credits,13-single-end,14-single-chapter,15-single-subdirs,16-lonely-in-multi,17-edge-spaces-begin,18-edge-spaces-end,19-inferno-spaced,20-shared-prefix,21-shared-suffix,22-shared-suffix-numeric,23-shared-prefix-year,24-book-begin-track,25-embedded-chapter-credits,26-mid-basename-track,27-track-total-suffix}
 
   for i in 1 2 3; do
     touch "$FIXTURES/01-begin-arabic/${i} Track.mp3"
@@ -117,6 +117,10 @@ setup_fixtures() {
   touch "$FIXTURES/26-mid-basename-track/Goblin Mode 03 - For the Loot 3 - 01 - Chapter 01.mp3"
   touch "$FIXTURES/26-mid-basename-track/Goblin Mode 03 - For the Loot 3 - 02 - Chapter 02.mp3"
   touch "$FIXTURES/26-mid-basename-track/Goblin Mode 03 - For the Loot 3 - 03 - Chapter 03.mp3"
+  mkdir -p "$FIXTURES/27-track-total-suffix"
+  touch "$FIXTURES/27-track-total-suffix/Gillian Flynn - Gone Girl 01-36.mp3"
+  touch "$FIXTURES/27-track-total-suffix/Gillian Flynn - Gone Girl 02-36.mp3"
+  touch "$FIXTURES/27-track-total-suffix/Gillian Flynn - Gone Girl 03-36.mp3"
   cat > "$FIXTURES/12-chapter-credits/playlist.m3u" <<'EOF'
 #EXTM3U
 #EXTINF:28, Opening Credits
@@ -455,6 +459,21 @@ test_mid_basename_track() {
   assert_contains "plans 03 with chapter" '03 Goblin Mode 03 - For the Loot 3 - Chapter 03.mp3' "$out"
 }
 
+test_track_total_suffix() {
+  print -r "\n== 27 Track-total suffix: Title 01-36 (part N of M) =="
+  local out=$(run_report "$FIXTURES/27-track-total-suffix")
+  assert_contains "end series detected" '=== End with numerals ===' "$out"
+  assert_contains "series groups title" 'Series (Arabic): Gone Girl' "$out"
+  assert_contains "track 01" '[01]' "$out"
+  assert_contains "track 03" '[03]' "$out"
+  out=$(run_rename_dry "$FIXTURES/27-track-total-suffix")
+  assert_contains "plans 01 prefix" '01 Gillian Flynn - Gone Girl.mp3' "$out"
+  assert_contains "plans 02 prefix" '02 Gillian Flynn - Gone Girl.mp3' "$out"
+  assert_contains "plans 03 prefix" '03 Gillian Flynn - Gone Girl.mp3' "$out"
+  out=$(run_report "$FIXTURES/09-lost-symbol-part")
+  assert_contains "lost symbol still groups" 'TheLostSymbolUnabridgedPart1_mp3' "$out"
+}
+
 test_shared_suffix_end_numeral() {
   print -r "\n== 21 Shared suffix: common title suffix grouping =="
   local out=$(run_rename_dry "$FIXTURES/21-shared-suffix")
@@ -539,6 +558,7 @@ main() {
   test_book_begin_track_not_book_suffix
   test_embedded_chapter_credits
   test_mid_basename_track
+  test_track_total_suffix
   test_format_unit
 
   print -r "\n== Summary =="

@@ -260,6 +260,21 @@ parse_mid_basename_track() {
   return 0
 }
 
+# Sets TRACK_TOTAL_STEM, TRACK_TOTAL_NUM, TRACK_TOTAL_VAL, TRACK_TOTAL_COUNT when basename
+# ends with " NN-NN" (track-of-total, e.g. Gone Girl 01-36).
+parse_track_total_suffix() {
+  local base=$1
+  TRACK_TOTAL_STEM= TRACK_TOTAL_NUM= TRACK_TOTAL_VAL=0 TRACK_TOTAL_COUNT=0
+  [[ $base =~ '(.*)[[:space:]_-]+([0-9]{1,3})-([0-9]{1,3})$' ]] || return 1
+  TRACK_TOTAL_STEM=$(strip_edge_seps "$match[1]")
+  TRACK_TOTAL_NUM=$match[2]
+  TRACK_TOTAL_VAL=$(( 10#${match[2]} ))
+  TRACK_TOTAL_COUNT=$(( 10#${match[3]} ))
+  (( TRACK_TOTAL_VAL >= 1 && TRACK_TOTAL_VAL <= TRACK_TOTAL_COUNT && TRACK_TOTAL_COUNT >= 2 )) || return 1
+  [[ -n $TRACK_TOTAL_STEM ]] || return 1
+  return 0
+}
+
 # True when leading digits are an ordinal (20th, 1st), not a track index.
 is_ordinal_begin_rest() {
   local rest=$1
@@ -512,7 +527,7 @@ parse_audio_name() {
   local base=$1
   local b_num= b_kind= b_val= e_num= e_kind= e_val=
   local roman_candidate key album_key album_prefix title_key
-  local volume_num=0 book_num=0 part_num=0 chapter_num=0 section_num=0 true_edge=0 embedded_structure=0 mid_basename=0 struct_data
+  local volume_num=0 book_num=0 part_num=0 chapter_num=0 section_num=0 true_edge=0 embedded_structure=0 mid_basename=0 track_total=0 struct_data
   local pos use_kind use_val use_num part_label
 
   if [[ $base =~ '^([0-9]+)(.*)' ]]; then
@@ -552,6 +567,10 @@ parse_audio_name() {
     if [[ -n $e_num ]] && is_structure_derived_end "$base" "$e_num"; then
       e_num=; e_kind=; e_val=
     fi
+  elif [[ -z $b_num ]] && parse_track_total_suffix "$base"; then
+    track_total=1
+    e_num=; e_kind=; e_val=
+    pos=end
   fi
 
   if [[ $pos == none ]]; then
@@ -590,6 +609,23 @@ parse_audio_name() {
       album_prefix=$(remove_embedded_structure_segments "$key")
       album_prefix=$(collapse_title_separators "$album_prefix")
     fi
+  elif (( track_total )); then
+    true_edge=1
+    use_kind=arabic
+    use_val=$TRACK_TOTAL_VAL
+    use_num=$TRACK_TOTAL_NUM
+    pos=end
+    key=$TRACK_TOTAL_STEM
+    [[ -n $key ]] || key='__bare__'
+    struct_data=$(extract_album_structure "$key")
+    load_structure_fields "$struct_data"
+    volume_num=$STRUCT_FIELDS[1]
+    book_num=$STRUCT_FIELDS[2]
+    part_num=$STRUCT_FIELDS[3]
+    chapter_num=$STRUCT_FIELDS[4]
+    section_num=$STRUCT_FIELDS[5]
+    album_prefix=$STRUCT_FIELDS[6]
+    [[ -n $album_prefix ]] || album_prefix=$key
   else
     if is_true_edge_track "$base" "$b_num" "$e_num"; then
       true_edge=1
