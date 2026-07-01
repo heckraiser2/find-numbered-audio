@@ -42,7 +42,7 @@ assert_not_contains() {
 
 setup_fixtures() {
   rm -rf "$FIXTURES"
-  mkdir -p "$FIXTURES"/{01-begin-arabic,02-end-arabic,03-end-roman,04-begin-roman,05-both-arabic,06-no-series,07-false-positive,08-gap,09-lost-symbol-part,10-inferno-sections,11-chapter-mid,12-chapter-credits,13-single-end,14-single-chapter,15-single-subdirs,16-lonely-in-multi,17-edge-spaces-begin,18-edge-spaces-end,19-inferno-spaced,20-shared-prefix,21-shared-suffix,22-shared-suffix-numeric,23-shared-prefix-year,24-book-begin-track,25-embedded-chapter-credits,26-mid-basename-track,27-track-total-suffix}
+  mkdir -p "$FIXTURES"/{01-begin-arabic,02-end-arabic,03-end-roman,04-begin-roman,05-both-arabic,06-no-series,07-false-positive,08-gap,09-lost-symbol-part,10-inferno-sections,11-chapter-mid,12-chapter-credits,13-single-end,14-single-chapter,15-single-subdirs,16-lonely-in-multi,17-edge-spaces-begin,18-edge-spaces-end,19-inferno-spaced,20-shared-prefix,21-shared-suffix,22-shared-suffix-numeric,23-shared-prefix-year,24-book-begin-track,25-embedded-chapter-credits,26-mid-basename-track,27-track-total-suffix,28-global-chapter-question,29-openaudible-end-numeral}
 
   for i in 1 2 3; do
     touch "$FIXTURES/01-begin-arabic/${i} Track.mp3"
@@ -121,6 +121,21 @@ setup_fixtures() {
   touch "$FIXTURES/27-track-total-suffix/Gillian Flynn - Gone Girl 01-36.mp3"
   touch "$FIXTURES/27-track-total-suffix/Gillian Flynn - Gone Girl 02-36.mp3"
   touch "$FIXTURES/27-track-total-suffix/Gillian Flynn - Gone Girl 03-36.mp3"
+  mkdir -p "$FIXTURES/28-global-chapter-question"
+  touch "$FIXTURES/28-global-chapter-question/01 Introduction.m4b"
+  touch "$FIXTURES/28-global-chapter-question/08 Katha Upanishad_ Chapter 1.m4b"
+  touch "$FIXTURES/28-global-chapter-question/09 Katha Upanishad_ Chapter 2.m4b"
+  touch "$FIXTURES/28-global-chapter-question/52 Prasna Upanishad_ Question 1.m4b"
+  touch "$FIXTURES/28-global-chapter-question/53 Prasna Upanishad_ Question 2.m4b"
+  touch "$FIXTURES/28-global-chapter-question/54 Prasna Upanishad_ Question 3.m4b"
+  touch "$FIXTURES/28-global-chapter-question/55 Prasna Upanishad_ Question 4.m4b"
+  touch "$FIXTURES/28-global-chapter-question/56 Prasna Upanishad_ Question 5.m4b"
+  touch "$FIXTURES/28-global-chapter-question/57 Prasna Upanishad_ Question 6.m4b"
+  touch "$FIXTURES/28-global-chapter-question/58 Kausitaki Upanishad_ Chapter 1.m4b"
+  mkdir -p "$FIXTURES/29-openaudible-end-numeral"
+  touch "$FIXTURES/29-openaudible-end-numeral/Song 1.wav"
+  touch "$FIXTURES/29-openaudible-end-numeral/Song 2.wav"
+  touch "$FIXTURES/29-openaudible-end-numeral/Song 10.wav"
   cat > "$FIXTURES/12-chapter-credits/playlist.m3u" <<'EOF'
 #EXTM3U
 #EXTINF:28, Opening Credits
@@ -504,6 +519,32 @@ test_inferno_spaced_apply() {
   rm -rf "$tmp"
 }
 
+test_global_chapter_question() {
+  print -r "\n== 28 Global index: begin track + Chapter/Question suffix =="
+  local out=$(run_report "$FIXTURES/28-global-chapter-question")
+  assert_contains "katha series" 'Series (Arabic): Katha Upanishad_ Chapter' "$out"
+  assert_contains "prasna track 52" '[52]' "$out"
+  assert_contains "prasna track 57" '[57]' "$out"
+  assert_not_contains "prasna not renumbered to 01" '[01] /' "$out"
+  out=$(run_rename_dry "$FIXTURES/28-global-chapter-question")
+  assert_contains "no renames planned" 'No renames planned' "$out"
+  assert_not_contains "chapter num not stripped" '08 Katha Upanishad_ Chapter.m4b' "$out"
+  assert_not_contains "prasna not moved to 01" '01 Prasna Upanishad_ Question' "$out"
+}
+
+test_openaudible_join_preview() {
+  print -r "\n== OpenAudible join preview =="
+  local out
+  out=$(run_rename_dry "$FIXTURES/28-global-chapter-question")
+  assert_contains "preview section" '=== OpenAudible join preview ===' "$out"
+  assert_contains "upanishads join-ready" 'Join-ready — no renames needed' "$out"
+  out=$(run_rename_dry "$FIXTURES/29-openaudible-end-numeral")
+  assert_contains "end numeral lex break" 'lex order does not increase' "$out"
+  assert_contains "recommend apply before join" 'Apply --rename --apply before joining' "$out"
+  out=$(run_report "$FIXTURES/28-global-chapter-question")
+  assert_contains "report includes preview" '=== OpenAudible join preview ===' "$out"
+}
+
 test_format_unit() {
   print -r "\n== Unit: format_leading_numeral =="
   local out
@@ -559,6 +600,8 @@ main() {
   test_embedded_chapter_credits
   test_mid_basename_track
   test_track_total_suffix
+  test_global_chapter_question
+  test_openaudible_join_preview
   test_format_unit
 
   print -r "\n== Summary =="

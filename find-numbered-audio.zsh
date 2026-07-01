@@ -43,6 +43,8 @@
 #       and last+1 when a numbered album series is renamed in the same folder.
 #     - .m3u playlists in the same folder are updated to reference new filenames
 #       when --rename --apply runs (dry-run shows planned playlist line changes).
+#     - Dry-run and report include an OpenAudible join preview (lex sort vs track
+#       order) with a recommendation on whether --apply is needed before joining.
 #     - Leading/trailing spaces in basenames are trimmed before parsing; renames
 #       drop those spaces from the new filename.
 #     - Ordinals at the title start (20th, 1st) are not treated as track numbers.
@@ -219,7 +221,7 @@ load_structure_fields() {
 strip_trailing_structure_index() {
   local key=$1 e_num=$2
   local lb=${(L)key} keep
-  [[ $lb =~ '(.*)(^|[^[:alpha:]])(volume|book|part|chapter|section)[._ -]*'${e_num}'$' ]] || return 1
+  [[ $lb =~ '(.*)(^|[^[:alpha:]])(volume|book|part|chapter|section|question)[._ -]*'${e_num}'$' ]] || return 1
   keep=${#match[1]}
   key=${key[1,$keep]}
   key=$(strip_edge_seps "$key")
@@ -230,7 +232,7 @@ is_structure_derived_end() {
   local base=$1 e_num=$2
   local lb=${(L)base}
   # Arabic structure labels only; trailing Roman (e.g. Chapter III) is a track index.
-  [[ $e_num == <-> ]] && [[ $lb =~ '(^|[^[:alpha:]])(volume|book|part|chapter|section)[._ -]*'${e_num}'$' ]]
+  [[ $e_num == <-> ]] && [[ $lb =~ '(^|[^[:alpha:]])(volume|book|part|chapter|section|question)[._ -]*'${e_num}'$' ]]
 }
 
 # True when begin/end numerals are a track index (e.g. -01), not Part/Chapter/Section labels.
@@ -527,7 +529,7 @@ parse_audio_name() {
   local base=$1
   local b_num= b_kind= b_val= e_num= e_kind= e_val=
   local roman_candidate key album_key album_prefix title_key
-  local volume_num=0 book_num=0 part_num=0 chapter_num=0 section_num=0 true_edge=0 embedded_structure=0 mid_basename=0 track_total=0 struct_data
+  local volume_num=0 book_num=0 part_num=0 chapter_num=0 section_num=0 true_edge=0 embedded_structure=0 mid_basename=0 track_total=0 preserve_title_suffix=0 struct_data
   local pos use_kind use_val use_num part_label
 
   if [[ $base =~ '^([0-9]+)(.*)' ]]; then
@@ -634,6 +636,9 @@ parse_audio_name() {
         structure_end=1
         use_kind=$b_kind; use_val=$b_val; use_num=$b_num
         pos=begin
+        # Global track index + distinct structure index (e.g. 08 … Chapter 1, 52 … Question 1):
+        # keep the full title after the leading numeral; do not strip the structure suffix.
+        (( b_val != e_val )) && preserve_title_suffix=1
       elif [[ $pos == both ]] && is_catalog_end_numeral "$b_val" "$e_val" "$e_num"; then
         catalog_end=1
         use_kind=$b_kind; use_val=$b_val; use_num=$b_num
@@ -702,7 +707,14 @@ parse_audio_name() {
   album_key=$album_prefix
   [[ -n $album_key ]] || album_key='__bare__'
 
-  if (( embedded_structure || mid_basename )); then
+  if (( preserve_title_suffix )); then
+    title_key=$base
+    if [[ -n $b_num ]]; then
+      title_key=${title_key#"$b_num"}
+      title_key=$(strip_edge_seps "$title_key")
+    fi
+    [[ -n $title_key ]] || title_key=$key
+  elif (( embedded_structure || mid_basename )); then
     title_key=$key
   else
     part_label=$(structure_part_label "$volume_num" "$book_num" "$part_num" "$chapter_num" "$section_num")
@@ -1257,6 +1269,220 @@ update_m3u_playlists() {
   return 0
 }
 
+typeset -gA PLANNED_RENAME_MAP
+typeset -gi OA_JOIN_FILE_COUNT=0 OA_JOIN_UNPARSED=0 OA_JOIN_DUP_PREFIX=0 OA_JOIN_ORDER_BREAKS=0
+typeset -ga OA_JOIN_ISSUES=()
+
+# Build rename map from PLANNED_RENAMES (call after plan_renames_silent / handle_group_runs).
+build_planned_rename_map() {
+  local entry oldpath newpath
+  PLANNED_RENAME_MAP=()
+  for entry in "${PLANNED_RENAMES[@]}"; do
+    oldpath=${entry%%$'\t'*}
+    newpath=${entry#*$'\t'}
+    PLANNED_RENAME_MAP[$oldpath]=$newpath
+  done
+}
+
+# Populate PLANNED_RENAMES without printing (for join-after-apply simulation).
+plan_renames_silent() {
+  typeset -gA CREDITS_PLANNED
+  PLANNED_RENAMES=()
+  CREDITS_PLANNED=()
+  local gkey entries
+  for gkey entries in ${(kv)SCAN_GROUPS}; do
+    handle_group_runs do_rename "$gkey" "$entries"
+  done
+}
+
+# Basename used for join sort simulation (optionally after planned rename).
+join_basename_for_file() {
+  local filepath=$1 simulate=$2 mapped
+  if (( simulate )) && [[ -n ${PLANNED_RENAME_MAP[$filepath]:-} ]]; then
+    print -rn -- ${PLANNED_RENAME_MAP[$filepath]:t}
+    return 0
+  fi
+  print -rn -- ${filepath:t}
+}
+
+# Audio files directly in dir (one OpenAudible book folder), one path per line.
+list_audio_files_in_dir() {
+  local dir=$1 f ext lext
+  local -a files=()
+  for f in "$dir"/*(N); do
+    [[ -f "$f" ]] || continue
+    [[ ${f:t} == .* ]] && continue
+    lext=${(L)${f:t}}
+    for ext in "${AUDIO_EXTS[@]}"; do
+      if [[ $lext == *.${ext} ]]; then
+        files+=("$f")
+        break
+      fi
+    done
+  done
+  if (( ${#files} )); then
+    print -rl -- "${files[@]}"
+  fi
+}
+
+# Track index for join-order checks (edge numeral or leading digits).
+openaudible_track_index_for_base() {
+  local base=$1
+  if parse_audio_name "$base" && (( PARSE_RESULT[13] )); then
+    print -rn -- "${PARSE_RESULT[3]}"
+    return 0
+  fi
+  if [[ $base =~ '^([0-9]+)[._ -]' ]]; then
+    print -rn -- $(( 10#${match[1]} ))
+    return 0
+  fi
+  return 1
+}
+
+# Sets OA_JOIN_* globals; returns 0 when lex order is join-safe for this dir.
+openaudible_check_dir_order() {
+  local dir=$1 simulate=$2
+  local -a files=("${(@f)$(list_audio_files_in_dir "$dir")}")
+  local f base track_num prev=-999 lead_prefix
+  local -A seen_prefixes=()
+  local -i unparsed=0 dup_prefix=0 order_break=0 file_count=${#files}
+  local -a lex_lines=() order_issues=()
+  local line
+
+  OA_JOIN_FILE_COUNT=0
+  OA_JOIN_UNPARSED=0
+  OA_JOIN_DUP_PREFIX=0
+  OA_JOIN_ORDER_BREAKS=0
+  OA_JOIN_ISSUES=()
+  (( file_count >= 2 )) || return 1
+
+  for f in "${files[@]}"; do
+    base=$(join_basename_for_file "$f" "$simulate")
+    base=$(audio_basename "$base")
+    lex_lines+=("$base"$'\t'"$f")
+  done
+  lex_lines=("${(@f)$(printf '%s\n' "${lex_lines[@]}" | LC_ALL=C sort -t '	' -k1,1)}")
+
+  for line in "${lex_lines[@]}"; do
+    base=${line%%$'\t'*}
+    if track_num=$(openaudible_track_index_for_base "$base"); then
+      :
+    else
+      (( unparsed++ ))
+      order_issues+=("no track index (may sort unpredictably): ${base}")
+      continue
+    fi
+    if [[ $base =~ '^([0-9]+)' ]]; then
+      lead_prefix=$match[1]
+      if [[ -n ${seen_prefixes[$lead_prefix]:-} ]]; then
+        (( dup_prefix++ ))
+        order_issues+=("duplicate prefix ${lead_prefix}: ${seen_prefixes[$lead_prefix]} and ${base}")
+      fi
+      seen_prefixes[$lead_prefix]=$base
+    fi
+    if (( prev >= 0 && track_num <= prev )); then
+      (( order_break++ ))
+      order_issues+=("track ${track_num} follows ${prev} in lex order: ${base}")
+    fi
+    prev=$track_num
+  done
+
+  OA_JOIN_FILE_COUNT=$file_count
+  OA_JOIN_UNPARSED=$unparsed
+  OA_JOIN_DUP_PREFIX=$dup_prefix
+  OA_JOIN_ORDER_BREAKS=$order_break
+  OA_JOIN_ISSUES=("${order_issues[@]}")
+  (( order_break == 0 && dup_prefix == 0 && unparsed == 0 ))
+}
+
+openaudible_print_dir_preview() {
+  local dir=$1 planned_count=$2
+  local -i current_ok=0 after_ok=0
+  local issue n
+  local -i cur_unparsed cur_dup cur_breaks
+  local -a cur_issues=()
+
+  openaudible_check_dir_order "$dir" 0
+  (( $? == 0 )) && current_ok=1
+  cur_unparsed=$OA_JOIN_UNPARSED
+  cur_dup=$OA_JOIN_DUP_PREFIX
+  cur_breaks=$OA_JOIN_ORDER_BREAKS
+  cur_issues=("${OA_JOIN_ISSUES[@]}")
+
+  build_planned_rename_map
+  openaudible_check_dir_order "$dir" 1
+  (( $? == 0 )) && after_ok=1
+
+  print -r "${OA_JOIN_FILE_COUNT} audio file(s); lexicographic sort vs intended track order."
+  if (( cur_unparsed )); then
+    print -r "  ${cur_unparsed} file(s) without a detectable track index."
+  fi
+  if (( cur_dup )); then
+    print -r "  ${cur_dup} duplicate leading track prefix(es) in sort order."
+  fi
+  if (( cur_breaks )); then
+    print -r "  ${cur_breaks} place(s) where lex order does not increase by track number."
+  fi
+  n=0
+  for issue in "${cur_issues[@]}"; do
+    (( n++ )) || continue
+    (( n <= 3 )) && print -r "    - $issue"
+  done
+  (( ${#cur_issues} > 3 )) && print -r "    - … and $((${#cur_issues} - 3)) more"
+
+  if (( current_ok )); then
+    if (( planned_count )); then
+      print -r 'Recommendation: Join-ready now — renames are optional (normalization only).'
+    else
+      print -r 'Recommendation: Join-ready — no renames needed for OpenAudible join.'
+    fi
+  elif (( after_ok && planned_count )); then
+    print -r 'Recommendation: Apply --rename --apply before joining (lex order wrong now; planned renames fix it).'
+  elif (( ! current_ok && ! after_ok && planned_count )); then
+    print -r 'Recommendation: Do not apply — planned renames would not produce join-safe lex order.'
+  elif (( ! current_ok && ! planned_count )); then
+    print -r 'Recommendation: Join order may fail — no automatic renames available; fix filenames manually.'
+  else
+    print -r 'Recommendation: Review issues above before joining; partial or ambiguous ordering.'
+  fi
+}
+
+print_openaudible_join_preview() {
+  local target_dir=$1
+  local -i planned_count=${#PLANNED_RENAMES}
+  local dir count
+  local -a dirs=()
+
+  if (( ! ${#SCAN_DIR_AUDIO_COUNT} )); then
+    scan_directory "$target_dir"
+  fi
+  if (( ! planned_count )); then
+    plan_renames_silent
+    planned_count=${#PLANNED_RENAMES}
+  fi
+  build_planned_rename_map
+
+  print ''
+  print -r '=== OpenAudible join preview ==='
+  print -r '(OpenAudible joins in plain alphabetical filename order; zero-padded leading track numbers are most reliable.)'
+  print ''
+
+  for dir count in ${(kv)SCAN_DIR_AUDIO_COUNT}; do
+    (( count >= 2 )) && dirs+=("$dir")
+  done
+  dirs=("${(@On)dirs}")
+  if (( ! ${#dirs} )); then
+    print -r 'No folder with 2+ audio files (single-file folders do not need join ordering).'
+    return 0
+  fi
+
+  for dir in "${dirs[@]}"; do
+    (( ${#dirs} > 1 )) && { print -r "Folder: $dir"; print '' }
+    openaudible_print_dir_preview "$dir" "$planned_count"
+    (( ${#dirs} > 1 )) && print ''
+  done
+}
+
 print_report() {
   local target_dir=$1 gkey entries
   REPORT_BEGIN=(); REPORT_END=(); REPORT_BOTH=()
@@ -1278,6 +1504,7 @@ print_report() {
   if (( ! ${#REPORT_BEGIN} && ! ${#REPORT_END} && ! ${#REPORT_BOTH} )); then
     print -r 'No sequential numbered audio series found.'
   fi
+  print_openaudible_join_preview "$target_dir"
 }
 
 # Apply renames with mv (exact paths; zmv treats () and other glob chars in names as patterns).
@@ -1356,6 +1583,7 @@ run_renames() {
   done
   if (( ! ${#PLANNED_RENAMES} )); then
     print -r "No renames planned under: $target_dir"
+    print_openaudible_join_preview "$target_dir"
     return 0
   fi
   print -r "Planned renames (${#PLANNED_RENAMES}) under: $target_dir"
@@ -1376,6 +1604,7 @@ run_renames() {
   if [[ -z $apply ]]; then
     print ''
     print -r 'Dry run only. Pass --apply to rename files.'
+    print_openaudible_join_preview "$target_dir"
     return 0
   fi
   print ''

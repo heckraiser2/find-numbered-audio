@@ -72,6 +72,7 @@ Or copy `find-numbered-audio.zsh` anywhere on your `PATH`.
 - **Single-audio folders** → lone parseable files are still eligible
 - **Shared title prefix/suffix** → end-primary tracks grouped (e.g. `20th Century Ghosts … 01.mp3`)
 - **Catalog numbers** → long or mismatched begin/end values kept in the title (e.g. `2001 A Space Odyssey - 01.mp3`, `01 title - 012345678.mp3`)
+- **Global track + Chapter/Question** → leading track index kept; trailing structure kept in title (e.g. `08 Katha Upanishad_ Chapter 1.m4b`, `52 Prasna Upanishad_ Question 1.m4b` — no renames when already correct)
 
 ## Tests
 
@@ -96,6 +97,8 @@ After `--rename --apply`, this tool moves the track index to a **zero-padded lea
 ```bash
 ls -1 /path/to/book | sort
 ```
+
+Dry-run and report output include an **OpenAudible join preview**: lexicographic sort vs intended track order, plus a recommendation on whether `--apply` is needed before joining.
 
 ## Keywords
 
